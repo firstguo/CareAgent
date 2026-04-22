@@ -1,0 +1,59 @@
+# Prometheus 配置文件
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus 自身
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # MCP Gateway
+  - job_name: 'gateway'
+    static_configs:
+      - targets: ['gateway:4444']
+    metrics_path: '/metrics'
+
+  # User Service
+  - job_name: 'user-service'
+    static_configs:
+      - targets: ['user-service:8001']
+    metrics_path: '/metrics'
+
+  # Memory Service
+  - job_name: 'memory-service'
+    static_configs:
+      - targets: ['memory-service:8002']
+    metrics_path: '/metrics'
+
+  # Speech Service
+  - job_name: 'speech-service'
+    static_configs:
+      - targets: ['speech-service:8003']
+    metrics_path: '/metrics'
+
+  # Vision Service
+  - job_name: 'vision-service'
+    static_configs:
+      - targets: ['vision-service:8004']
+    metrics_path: '/metrics'
+
+  # LLM Service
+  - job_name: 'llm-service'
+    static_configs:
+      - targets: ['llm-service:8005']
+    metrics_path: '/metrics'
+
+  # Schedule Service
+  - job_name: 'schedule-service'
+    static_configs:
+      - targets: ['schedule-service:8006']
+    metrics_path: '/metrics'
+
+  # Milvus
+  - job_name: 'milvus'
+    static_configs:
+      - targets: ['milvus:9091']
+    metrics_path: '/metrics'

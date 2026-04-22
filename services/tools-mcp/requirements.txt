@@ -1,0 +1,17 @@
+# FastAPI + MCP Server
+fastapi==0.109.0
+uvicorn==0.27.0
+mcp==1.0.0
+pydantic==2.5.3
+
+# TAVILY Web Search
+tavily-python==0.3.1
+
+# AMAP (高德地图)
+requests==2.31.0
+
+# 日志
+structlog==24.1.0
+
+# Prometheus监控
+prometheus-client==0.20.0

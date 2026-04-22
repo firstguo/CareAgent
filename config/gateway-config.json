@@ -1,0 +1,45 @@
+{
+  "server": {
+    "port": 4444,
+    "host": "0.0.0.0"
+  },
+  "routes": [
+    {
+      "name": "user-service",
+      "pattern": "^user\\..*",
+      "endpoint": "http://user-service:8001/mcp"
+    },
+    {
+      "name": "tools-mcp",
+      "pattern": "^tools\\..*",
+      "endpoint": "http://tools-mcp:8008/mcp"
+    }
+  ],
+  "authentication": {
+    "type": "jwt",
+    "algorithm": "RS256",
+    "publicKeyPath": "/app/keys/public.pem",
+    "expiresIn": "24h"
+  },
+  "rateLimit": {
+    "enabled": true,
+    "redis": {
+      "host": "redis",
+      "port": 6379
+    },
+    "rules": []
+  },
+  "monitoring": {
+    "metrics": {
+      "enabled": true,
+      "path": "/metrics"
+    },
+    "health": {
+      "path": "/health"
+    },
+    "logging": {
+      "level": "info",
+      "format": "json"
+    }
+  }
+}

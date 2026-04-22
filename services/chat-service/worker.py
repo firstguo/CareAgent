@@ -51,6 +51,7 @@ async def main():
             speech_synthesize,
             vision_analyze,
             vision_detect_danger,
+            vision_detect_danger_video,
             llm_plan_task,
             llm_chat,
             memory_retrieve,

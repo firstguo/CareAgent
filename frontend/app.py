@@ -3,6 +3,9 @@ Streamlit前端 - 集成Chat Service REST API和定时任务管理
 """
 import streamlit as st
 import json
+import time
+import base64
+import requests
 from streamlit_lottie import st_lottie
 
 # 页面配置
@@ -315,3 +318,111 @@ with st.expander("📖 API文档"):
     }
     ```
     """)
+
+# ============================================
+# 视频摔倒检测测试页面
+# ============================================
+
+st.header("🎥 视频摔倒检测测试")
+st.info("上传一段视频（建议5-10秒），系统将分析是否发生摔倒")
+
+api_url = st.session_state.get('api_url', 'http://localhost:8007')
+
+uploaded_video = st.file_uploader(
+    "选择视频文件",
+    type=["webm", "mp4", "mov", "avi"],
+    help="支持WebM、MP4、MOV、AVI格式"
+)
+
+if uploaded_video:
+    # 显示视频预览
+    st.video(uploaded_video)
+    
+    # 读取视频数据
+    video_bytes = uploaded_video.read()
+    video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+    
+    st.write(f"📊 视频大小: {len(video_bytes) / 1024:.1f} KB")
+    
+    if st.button("🔍 分析视频", type="primary"):
+        with st.spinner("正在提交视频分析任务..."):
+            try:
+                # 调用后端API
+                response = requests.post(
+                    f"{api_url}/api_event_trigger",
+                    json={
+                        "user_id": "test_user_001",
+                        "trigger_type": "event_driven",
+                        "event_type": "manual_test",
+                        "video_data": video_base64
+                    }
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    task_id = result["task_id"]
+                    
+                    st.success(f"✅ 任务已提交: {task_id}")
+                    
+                    # 轮询结果
+                    with st.spinner("等待分析结果..."):
+                        progress_bar = st.progress(0)
+                        
+                        for i in range(30):  # 最多等待60秒
+                            time.sleep(2)
+                            progress_bar.progress((i + 1) / 30)
+                            
+                            status_response = requests.get(
+                                f"{api_url}/api_task_status/{task_id}"
+                            )
+                            status = status_response.json()
+                            
+                            if status["status"] == "completed":
+                                # 显示结果
+                                detection_result = status["result"]["result"]
+                                
+                                risk_level = detection_result["risk_level"]
+                                confidence = detection_result["confidence"]
+                                
+                                # 根据风险等级显示不同样式
+                                if risk_level == "critical":
+                                    st.error(f"🚨 检测到摔倒！置信度: {confidence:.0%}")
+                                elif risk_level == "warning":
+                                    st.warning(f"⚠️ 潜在风险！置信度: {confidence:.0%}")
+                                else:
+                                    st.success(f"✅ 状态正常！置信度: {confidence:.0%}")
+                                
+                                # 显示时序证据
+                                st.subheader("📈 时序分析")
+                                st.info(detection_result.get("temporal_evidence", "N/A"))
+                                
+                                # 显示建议
+                                st.subheader("💡 建议措施")
+                                for rec in detection_result.get("recommendations", []):
+                                    st.write(f"• {rec}")
+                                
+                                # 显示帧详情（可选）
+                                with st.expander("📸 查看帧分析详情"):
+                                    for i, frame_result in enumerate(
+                                        detection_result.get("frame_analysis", [])
+                                    ):
+                                        st.write(
+                                            f"**帧 {i+1}**: "
+                                            f"风险等级={frame_result.get('risk_level', 'N/A')}, "
+                                            f"描述={frame_result.get('risk_description', 'N/A')}"
+                                        )
+                                
+                                progress_bar.empty()
+                                break
+                            elif status["status"] == "failed":
+                                st.error(f"❌ 分析失败: {status.get('error', 'Unknown error')}")
+                                progress_bar.empty()
+                                break
+                        else:
+                            st.warning("⏰ 超时，请稍后手动查询结果")
+                            progress_bar.empty()
+                else:
+                    st.error(f"❌ 请求失败: {response.status_code} - {response.text}")
+            
+            except Exception as e:
+                st.error(f"请求失败: {str(e)}")

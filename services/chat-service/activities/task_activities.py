@@ -105,6 +105,30 @@ async def vision_detect_danger(image_data: str) -> Dict:
         raise
 
 
+@activity.defn(name="vision_detect_danger_video")
+async def vision_detect_danger_video(video_data: str) -> Dict:
+    """
+    视频危险检测Activity
+    
+    Args:
+        video_data: Base64视频数据
+    
+    Returns:
+        检测结果
+    """
+    try:
+        from modules.vision import detect_danger_video
+        result = await detect_danger_video(video_data)
+        
+        activity.logger.info("video_danger_detection_completed",
+                            risk_level=result.get("risk_level"))
+        return result
+        
+    except Exception as e:
+        activity.logger.error("video_danger_detection_failed", error=str(e))
+        raise
+
+
 @activity.defn(name="llm_plan_task")
 async def llm_plan_task(context: Dict) -> Dict:
     """

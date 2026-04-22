@@ -37,7 +37,6 @@ cp .env.example .env
 
 # 编辑.env文件，填入API密钥
 # - DASHSCOPE_API_KEY (通义千问)
-# - ALIYUN_ACCESS_KEY_ID/SECRET (阿里云语音)
 # - TAVILY_API_KEY (Web搜索)
 # - AMAP_API_KEY (高德地图)
 ```

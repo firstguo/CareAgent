@@ -32,10 +32,11 @@ mongo_db = None
 # ============================================
 
 class InputData(BaseModel):
-    type: Literal["voice", "text", "image", "multimodal"]
+    type: Literal["voice", "text", "image", "video", "multimodal"]
     text: Optional[str] = None
     audio_data: Optional[str] = None
     image_data: Optional[str] = None
+    video_data: Optional[str] = None
     context: Optional[dict] = None
 
 class TaskInput(BaseModel):
@@ -57,6 +58,14 @@ class TaskStatus(BaseModel):
     steps: list = []
     created_at: datetime
     updated_at: datetime
+
+class EventTriggerInput(BaseModel):
+    """事件触发输入"""
+    user_id: str
+    trigger_type: Literal["event_driven"] = "event_driven"
+    event_type: str  # "sensor_triggered", "manual_check", etc.
+    video_data: str  # Base64编码的视频
+    sensor_info: Optional[dict] = None  # 传感器信息
 
 # ============================================
 # 生命周期事件
@@ -202,6 +211,80 @@ async def api_task_status(task_id: str):
         "created_at": task["created_at"],
         "updated_at": task["updated_at"]
     }
+
+@app.post("/api_event_trigger")
+async def event_trigger(event_input: EventTriggerInput):
+    """
+    事件触发视频分析
+    
+    - 接收前端录制的视频
+    - 启动视频摔倒检测Workflow
+    - 返回task_id供查询
+    """
+    import uuid
+    from datetime import datetime
+    
+    task_id = f"fall_detect_{uuid.uuid4().hex[:12]}"
+    now = datetime.utcnow()
+    
+    # 创建任务记录
+    task_record = {
+        "_id": task_id,
+        "user_id": event_input.user_id,
+        "status": "pending",
+        "trigger_type": "event_driven",
+        "event_type": event_input.event_type,
+        "input": {
+            "type": "video",
+            "video_data": event_input.video_data,
+            "sensor_info": event_input.sensor_info
+        },
+        "steps": [],
+        "result": None,
+        "created_at": now,
+        "updated_at": now,
+        "expire_at": datetime(2026, 5, 22)
+    }
+    
+    await mongo_db.tasks.insert_one(task_record)
+    
+    try:
+        # 启动视频检测Workflow
+        handle = await temporal_client.start_workflow(
+            "VideoFallDetectionWorkflow",
+            args=[{
+                "task_id": task_id,
+                "user_id": event_input.user_id,
+                "video_data": event_input.video_data,
+                "sensor_info": event_input.sensor_info
+            }],
+            id=task_id,
+            task_queue=os.getenv("TEMPORAL_TASK_QUEUE", "careagent-tasks")
+        )
+        
+        # 更新状态
+        await mongo_db.tasks.update_one(
+            {"_id": task_id},
+            {"$set": {"status": "running", "updated_at": now}}
+        )
+        
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "message": "视频分析中，请等待结果"
+        }
+        
+    except Exception as e:
+        logger.error("workflow_start_failed", error=str(e))
+        await mongo_db.tasks.update_one(
+            {"_id": task_id},
+            {"$set": {
+                "status": "failed",
+                "error": str(e),
+                "updated_at": now
+            }}
+        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

@@ -15,6 +15,7 @@ with workflow.unsafe.imports_passed_through():
         speech_synthesize,
         vision_analyze,
         vision_detect_danger,
+        vision_detect_danger_video,
         llm_plan_task,
         llm_chat,
         memory_retrieve,
@@ -215,3 +216,49 @@ class CareTaskWorkflow:
                 "should_save_schedule": False,
                 "schedule": None
             }
+
+
+@workflow.defn(name="VideoFallDetectionWorkflow")
+class VideoFallDetectionWorkflow:
+    """视频摔倒检测工作流"""
+    
+    @workflow.run
+    async def run(self, workflow_input: Dict) -> Dict:
+        """
+        执行视频摔倒检测
+        
+        Args:
+            workflow_input: {
+                "task_id": "...",
+                "user_id": "...",
+                "video_data": "...",
+                "sensor_info": {...}
+            }
+        """
+        workflow.logger.info("video_fall_detection_started", 
+                            task_id=workflow_input["task_id"])
+        
+        try:
+            # 执行视频危险检测
+            detection_result = await workflow.execute_activity(
+                vision_detect_danger_video,
+                args=[workflow_input["video_data"]],
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=2)
+            )
+            
+            workflow.logger.info("video_fall_detection_completed",
+                                risk_level=detection_result["risk_level"],
+                                confidence=detection_result["confidence"])
+            
+            from datetime import datetime
+            return {
+                "task_id": workflow_input["task_id"],
+                "user_id": workflow_input["user_id"],
+                "result": detection_result,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            workflow.logger.error("video_fall_detection_failed", error=str(e))
+            raise

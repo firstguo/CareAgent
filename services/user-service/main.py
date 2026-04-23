@@ -1,14 +1,13 @@
-"""
+"""  
 User MCP Server - 用户管理服务
 支持多角色用户的CRUD和权限控制
 """
 import os
+import time
 from typing import Optional
 from fastapi import FastAPI
-from mcp.server import Server
-from mcp.types import Tool, TextContent
-from pydantic import BaseModel, Field
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
+from mcp.server.fastmcp import FastMCP
+from motor.motor_asyncio import AsyncIOMotorClient
 import structlog
 
 # 配置日志
@@ -22,193 +21,63 @@ logger = structlog.get_logger()
 
 # 应用配置
 app = FastAPI(title="User MCP Server", version="1.0.0")
-server = Server("user-service")
+mcp = FastMCP("user-service")
 
-# Milvus连接
-MILVUS_HOST = os.getenv("MILVUS_HOST", "localhost")
-MILVUS_PORT = os.getenv("MILVUS_PORT", "19530")
-COLLECTION_NAME = "careagent_users"
+# MongoDB连接配置
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://admin:admin123@mongodb:27017")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "careagent")
+COLLECTION_NAME = "users"
 
-connections.connect("default", host=MILVUS_HOST, port=MILVUS_PORT)
+# 全局变量
+mongo_client: Optional[AsyncIOMotorClient] = None
+db = None
+collection = None
 
-# 数据模型
-class UserCreate(BaseModel):
-    name: str
-    role: str  # elder, child, caregiver
-    age: Optional[int] = None
-    health_info: Optional[dict] = None
-    preferences: Optional[dict] = None
-
-class UserUpdate(BaseModel):
-    name: Optional[str] = None
-    age: Optional[int] = None
-    health_info: Optional[dict] = None
-    preferences: Optional[dict] = None
-    voice_preference: Optional[str] = None
-
-# Milvus集合管理
-def init_collection():
-    """初始化用户集合"""
-    if utility.has_collection(COLLECTION_NAME):
-        return Collection(COLLECTION_NAME)
+def connect_to_mongodb(max_retries=30, retry_interval=2):
+    """连接到MongoDB，带重试机制"""
+    global mongo_client, db, collection
     
-    fields = [
-        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-        FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=100),
-        FieldSchema(name="name", dtype=DataType.VARCHAR, max_length=200),
-        FieldSchema(name="role", dtype=DataType.VARCHAR, max_length=50),
-        FieldSchema(name="age", dtype=DataType.INT64),
-        FieldSchema(name="health_info", dtype=DataType.JSON),
-        FieldSchema(name="preferences", dtype=DataType.JSON),
-        FieldSchema(name="voice_preference", dtype=DataType.VARCHAR, max_length=100),
-        FieldSchema(name="created_at", dtype=DataType.VARCHAR, max_length=50),
-        FieldSchema(name="updated_at", dtype=DataType.VARCHAR, max_length=50),
-        FieldSchema(name="profile_vector", dtype=DataType.FLOAT_VECTOR, dim=128),  # 用户画像向量
-    ]
-    
-    schema = CollectionSchema(fields, "CareAgent Users")
-    collection = Collection(COLLECTION_NAME, schema)
-    # 为向量字段创建索引
-    index_params = {
-        "index_type": "IVF_FLAT",
-        "metric_type": "L2",
-        "params": {"nlist": 128}
-    }
-    collection.create_index(field_name="profile_vector", index_params=index_params)
-    return collection
+    for attempt in range(max_retries):
+        try:
+            logger.info("mongodb_connect_attempt", attempt=attempt+1, uri=MONGODB_URI)
+            mongo_client = AsyncIOMotorClient(MONGODB_URI)
+            db = mongo_client[MONGODB_DB_NAME]
+            collection = db[COLLECTION_NAME]
+            logger.info("mongodb_connected")
+            return True
+        except Exception as e:
+            logger.warning("mongodb_connect_failed", attempt=attempt+1, error=str(e))
+            if attempt < max_retries - 1:
+                time.sleep(retry_interval)
+            else:
+                logger.error("mongodb_connect_exhausted", max_retries=max_retries)
+                raise
+    return False
 
-collection = init_collection()
+async def init_collection():
+    """初始化用户集合，创建索引"""
+    # 创建 user_id 唯一索引
+    await collection.create_index("user_id", unique=True)
+    logger.info("mongodb_indexes_created")
 
-# MCP工具定义
-@server.list_tools()
-async def list_tools():
-    return [
-        Tool(
-            name="user.create_user",
-            description="创建新用户",
-            inputSchema=UserCreate.schema()
-        ),
-        Tool(
-            name="user.get_user",
-            description="获取用户信息",
-            inputSchema={"type": "object", "properties": {"user_id": {"type": "string"}}}
-        ),
-        Tool(
-            name="user.update_user",
-            description="更新用户信息",
-            inputSchema=UserUpdate.schema()
-        ),
-        Tool(
-            name="user.delete_user",
-            description="删除用户",
-            inputSchema={"type": "object", "properties": {"user_id": {"type": "string"}}}
-        ),
-        Tool(
-            name="user.switch_user",
-            description="切换当前用户（看护人专用）",
-            inputSchema={"type": "object", "properties": {"user_id": {"type": "string"}}}
-        ),
-        Tool(
-            name="user.set_voice_preference",
-            description="设置用户音色偏好",
-            inputSchema={"type": "object", "properties": {"user_id": {"type": "string"}, "voice_id": {"type": "string"}}}
-        ),
-        Tool(
-            name="user.get_voice_preference",
-            description="获取用户音色偏好",
-            inputSchema={"type": "object", "properties": {"user_id": {"type": "string"}}}
-        ),
-    ]
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    logger.info("tool_call", tool=name, arguments=arguments)
-    
-    if name == "user.create_user":
-        return await create_user(arguments)
-    elif name == "user.get_user":
-        return await get_user(arguments["user_id"])
-    elif name == "user.update_user":
-        return await update_user(arguments)
-    elif name == "user.delete_user":
-        return await delete_user(arguments["user_id"])
-    elif name == "user.switch_user":
-        return await switch_user(arguments["user_id"])
-    elif name == "user.set_voice_preference":
-        return await set_voice_preference(arguments["user_id"], arguments["voice_id"])
-    elif name == "user.get_voice_preference":
-        return await get_voice_preference(arguments["user_id"])
-    else:
-        raise ValueError(f"Unknown tool: {name}")
-
-async def create_user(data: dict):
-    """创建用户"""
-    import uuid
-    from datetime import datetime
-    
-    user_id = str(uuid.uuid4())
-    now = datetime.now().isoformat()
-    
-    entities = [
-        [user_id],
-        [data["name"]],
-        [data["role"]],
-        [data.get("age", 0)],
-        [data.get("health_info", {})],
-        [data.get("preferences", {})],
-        [data.get("voice_preference", "")],
-        [now],
-        [now]
-    ]
-    
-    collection.insert(entities)
-    collection.flush()
-    
-    logger.info("user_created", user_id=user_id)
-    return [TextContent(type="text", text=f"User created with ID: {user_id}")]
-
-async def get_user(user_id: str):
-    """获取用户信息"""
-    collection.load()
-    results = collection.query(expr=f'user_id == "{user_id}"', output_fields=["*"])
-    
-    if not results:
-        return [TextContent(type="text", text=f"User not found: {user_id}")]
-    
-    return [TextContent(type="text", text=str(results[0]))]
-
-async def update_user(data: dict):
-    """更新用户信息"""
-    user_id = data.pop("user_id")
-    # 简化实现，实际需要根据Milvus API更新
-    return [TextContent(type="text", text=f"User {user_id} updated")]
-
-async def delete_user(user_id: str):
-    """删除用户"""
-    collection.delete(expr=f'user_id == "{user_id}"')
-    collection.flush()
-    return [TextContent(type="text", text=f"User {user_id} deleted")]
-
-async def switch_user(user_id: str):
-    """切换用户"""
-    return [TextContent(type="text", text=f"Switched to user: {user_id}")]
-
-async def set_voice_preference(user_id: str, voice_id: str):
-    """设置音色偏好"""
-    return [TextContent(type="text", text=f"Voice preference set for {user_id}: {voice_id}")]
-
-async def get_voice_preference(user_id: str):
-    """获取音色偏好"""
-    collection.load()
-    results = collection.query(expr=f'user_id == "{user_id}"', output_fields=["voice_preference"])
-    
-    if not results:
-        return [TextContent(type="text", text="User not found")]
-    
-    voice = results[0].get("voice_preference", "")
-    return [TextContent(type="text", text=voice)]
-
+# ============================================
 # FastAPI路由
+# ============================================
+
+app = FastAPI(title="User MCP Server", version="1.0.0")
+
+@app.on_event("startup")
+async def startup():
+    """启动时连接MongoDB并初始化集合"""
+    global collection
+    
+    # 连接MongoDB（带重试）
+    connect_to_mongodb()
+    
+    # 初始化集合和索引
+    await init_collection()
+    logger.info("user_service_started")
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "user-service"}
@@ -218,11 +87,164 @@ async def metrics():
     from prometheus_client import generate_latest
     return generate_latest()
 
-# MCP端点
-@app.post("/mcp")
-async def mcp_endpoint():
-    # MCP协议处理
-    return {"status": "ok"}
+# ============================================
+# MCP Tools - 使用 FastMCP 装饰器
+# ============================================
+
+@mcp.tool(name="user.create_user")
+async def create_user(
+    name: str,
+    role: str,
+    age: int = 0,
+    health_info: Optional[dict] = None,
+    preferences: Optional[dict] = None,
+    voice_preference: str = ""
+) -> str:
+    """创建新用户"""
+    import uuid
+    from datetime import datetime
+    
+    logger.info("tool_call", tool="user.create_user", name=name, role=role)
+    
+    user_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    
+    user_doc = {
+        "user_id": user_id,
+        "name": name,
+        "role": role,
+        "age": age,
+        "health_info": health_info or {},
+        "preferences": preferences or {},
+        "voice_preference": voice_preference,
+        "created_at": now,
+        "updated_at": now
+    }
+    
+    await collection.insert_one(user_doc)
+    
+    logger.info("user_created", user_id=user_id)
+    return f"User created with ID: {user_id}"
+
+@mcp.tool(name="user.get_user")
+async def get_user(user_id: str) -> str:
+    """获取用户信息"""
+    logger.info("tool_call", tool="user.get_user", user_id=user_id)
+    
+    user = await collection.find_one({"user_id": user_id}, {"_id": 0})
+    
+    if not user:
+        return f"User not found: {user_id}"
+    
+    return str(user)
+
+@mcp.tool(name="user.update_user")
+async def update_user(
+    user_id: str,
+    name: Optional[str] = None,
+    age: Optional[int] = None,
+    health_info: Optional[dict] = None,
+    preferences: Optional[dict] = None,
+    voice_preference: Optional[str] = None
+) -> str:
+    """更新用户信息"""
+    from datetime import datetime
+    
+    logger.info("tool_call", tool="user.update_user", user_id=user_id)
+    
+    # 收集需要更新的字段
+    update_data = {}
+    if name is not None:
+        update_data["name"] = name
+    if age is not None:
+        update_data["age"] = age
+    if health_info is not None:
+        update_data["health_info"] = health_info
+    if preferences is not None:
+        update_data["preferences"] = preferences
+    if voice_preference is not None:
+        update_data["voice_preference"] = voice_preference
+    
+    if not update_data:
+        return f"No fields to update for user {user_id}"
+    
+    # 添加更新时间
+    update_data["updated_at"] = datetime.utcnow().isoformat()
+    
+    result = await collection.update_one(
+        {"user_id": user_id},
+        {"$set": update_data}
+    )
+    
+    if result.matched_count == 0:
+        return f"User not found: {user_id}"
+    
+    logger.info("user_updated", user_id=user_id)
+    return f"User {user_id} updated successfully"
+
+@mcp.tool(name="user.delete_user")
+async def delete_user(user_id: str) -> str:
+    """删除用户"""
+    logger.info("tool_call", tool="user.delete_user", user_id=user_id)
+    
+    result = await collection.delete_one({"user_id": user_id})
+    
+    if result.deleted_count == 0:
+        return f"User not found: {user_id}"
+    
+    logger.info("user_deleted", user_id=user_id)
+    return f"User {user_id} deleted"
+
+@mcp.tool(name="user.switch_user")
+async def switch_user(user_id: str) -> str:
+    """切换当前用户（看护人专用）"""
+    logger.info("tool_call", tool="user.switch_user", user_id=user_id)
+    
+    user = await collection.find_one({"user_id": user_id}, {"_id": 0})
+    
+    if not user:
+        return f"User not found: {user_id}"
+    
+    logger.info("user_switched", user_id=user_id)
+    return f"Switched to user: {user_id} (name: {user['name']}, role: {user['role']})"
+
+@mcp.tool(name="user.set_voice_preference")
+async def set_voice_preference(user_id: str, voice_id: str) -> str:
+    """设置用户音色偏好"""
+    from datetime import datetime
+    
+    logger.info("tool_call", tool="user.set_voice_preference", user_id=user_id, voice_id=voice_id)
+    
+    result = await collection.update_one(
+        {"user_id": user_id},
+        {"$set": {"voice_preference": voice_id, "updated_at": datetime.utcnow().isoformat()}}
+    )
+    
+    if result.matched_count == 0:
+        return f"User not found: {user_id}"
+    
+    logger.info("voice_preference_set", user_id=user_id, voice_id=voice_id)
+    return f"Voice preference set for {user_id}: {voice_id}"
+
+@mcp.tool(name="user.get_voice_preference")
+async def get_voice_preference(user_id: str) -> str:
+    """获取用户音色偏好"""
+    logger.info("tool_call", tool="user.get_voice_preference", user_id=user_id)
+    
+    user = await collection.find_one(
+        {"user_id": user_id},
+        {"_id": 0, "voice_preference": 1}
+    )
+    
+    if not user:
+        return "User not found"
+    
+    voice = user.get("voice_preference", "")
+    return voice
+
+# 挂载 FastMCP 到 FastAPI
+mcp_app = mcp.streamable_http_app()
+app.mount("/mcp", mcp_app)
 
 if __name__ == "__main__":
     import uvicorn

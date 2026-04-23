@@ -206,15 +206,15 @@ services:
       - ./services/user-service:/app
     depends_on:
       - redis
-      - milvus
+      - mongodb
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     environment:
-      - MILVUS_HOST=milvus
-      - MILVUS_PORT=19530
+      - MONGODB_URI=mongodb://admin:admin123@mongodb:27017
+      - MONGODB_DB_NAME=careagent
 
   # ============================================
   # 已删除的旧服务（已合并到chat-service）

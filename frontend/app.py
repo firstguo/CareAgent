@@ -76,7 +76,14 @@ st.components.v1.html(f"""
 with st.sidebar:
     st.header("⚙️ 配置")
     
-    api_url = st.text_input("Chat Service API地址", value="http://localhost:8007")
+    # 检测是否在Docker环境中
+    import os
+    in_docker = os.path.exists('/.dockerenv')
+    
+    # 根据环境设置默认API地址
+    default_api_url = "http://chat-service:8007" if in_docker else "http://localhost:8007"
+    
+    api_url = st.text_input("Chat Service API地址", value=default_api_url)
     user_id = st.text_input("用户ID", value="user_001")
     
     # 初始化客户端
@@ -118,24 +125,71 @@ with tab1:
         if st.button("发送", type="primary"):
             if user_input:
                 with st.spinner("处理中..."):
-                    # 显示JavaScript调用示例
-                    st.code(f"""
-// 前端JavaScript调用示例
-const client = new ChatServiceClient('{api_url}');
-const result = await client.sendTextMessage('{user_id}', '{user_input}');
-console.log('Task ID:', result.task_id);
-
-// 轮询任务状态
-const status = await client.pollTaskStatus(result.task_id);
-console.log('Response:', status.result.final_response);
-
-// 如果有音频回复，播放它
-if (status.result.audio_response) {{
-    client.playBase64Audio(status.result.audio_response);
-}}
-                    """, language="javascript")
+                    try:
+                        # 调用后端API提交任务
+                        response = requests.post(
+                            f"{api_url}/api_planning",
+                            json={
+                                "user_id": user_id,
+                                "trigger_type": "user_initiated",
+                                "input": {
+                                    "type": "text",
+                                    "text": user_input
+                                }
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            task_id = result["task_id"]
+                            
+                            st.success(f"✅ 任务已提交: {task_id}")
+                            
+                            # 轮询任务状态
+                            with st.spinner("等待回复..."):
+                                progress_bar = st.progress(0)
+                                
+                                for i in range(30):  # 最多等待60秒
+                                    time.sleep(2)
+                                    progress_bar.progress((i + 1) / 30)
+                                    
+                                    status_response = requests.get(
+                                        f"{api_url}/api_task_status/{task_id}"
+                                    )
+                                    status = status_response.json()
+                                    
+                                    if status["status"] == "completed":
+                                        # 显示文本回复
+                                        final_response = status["result"].get("final_response", "")
+                                        if final_response:
+                                            st.subheader("💬 AI回复")
+                                            st.write(final_response)
+                                        
+                                        # 如果有音频，提供播放
+                                        audio_response = status["result"].get("audio_response")
+                                        if audio_response:
+                                            st.subheader("🔊 语音回复")
+                                            # 将base64音频转换为可播放格式
+                                            audio_bytes = base64.b64decode(audio_response)
+                                            st.audio(audio_bytes, format="audio/wav")
+                                        
+                                        # 保存任务历史
+                                        st.session_state.task_history.append(status)
+                                        
+                                        progress_bar.empty()
+                                        break
+                                    elif status["status"] == "failed":
+                                        st.error(f"❌ 任务失败: {status.get('error', 'Unknown error')}")
+                                        progress_bar.empty()
+                                        break
+                                else:
+                                    st.warning("⏰ 超时，请稍后手动查询结果")
+                                    progress_bar.empty()
+                        else:
+                            st.error(f"❌ 请求失败: {response.status_code} - {response.text}")
                     
-                    st.info("💡 实际调用需要在浏览器中执行JavaScript代码")
+                    except Exception as e:
+                        st.error(f"请求失败: {str(e)}")
     
     elif input_type == "语音":
         st.info("🎤 语音录制功能需要浏览器麦克风权限")
@@ -326,7 +380,8 @@ with st.expander("📖 API文档"):
 st.header("🎥 视频摔倒检测测试")
 st.info("上传一段视频（建议5-10秒），系统将分析是否发生摔倒")
 
-api_url = st.session_state.get('api_url', 'http://localhost:8007')
+# 使用侧边栏配置的api_url
+api_url = st.session_state.get('chat_client', 'http://localhost:8007')
 
 uploaded_video = st.file_uploader(
     "选择视频文件",

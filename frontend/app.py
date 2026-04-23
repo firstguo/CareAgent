@@ -56,10 +56,10 @@ document.addEventListener('DOMContentLoaded', function() {
 st.components.v1.html(js_code, height=0)
 
 # 加载JavaScript文件
-with open('frontend/js/schedule_manager.js', 'r', encoding='utf-8') as f:
+with open('js/schedule_manager.js', 'r', encoding='utf-8') as f:
     schedule_js = f.read()
     
-with open('frontend/js/chat_service_client.js', 'r', encoding='utf-8') as f:
+with open('js/chat_service_client.js', 'r', encoding='utf-8') as f:
     client_js = f.read()
 
 st.components.v1.html(f"""

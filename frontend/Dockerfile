@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
 # 安装 Streamlit 和其他依赖
 RUN pip install --no-cache-dir \
     streamlit \
+    streamlit-lottie \
     requests \
     python-dotenv
 

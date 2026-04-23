@@ -11,10 +11,6 @@ import structlog
 # 导入Activities
 with workflow.unsafe.imports_passed_through():
     from activities.task_activities import (
-        speech_transcribe,
-        speech_synthesize,
-        vision_analyze,
-        vision_detect_danger,
         vision_detect_danger_video,
         llm_plan_task,
         llm_chat,
@@ -62,56 +58,9 @@ class CareTaskWorkflow:
         
         try:
             # ==================== Phase 1: 输入处理 ====================
-            # 并行处理语音识别和视觉分析（如果提供了输入）
+            # 直接使用文本输入
             
-            vision_context = {}
             user_text = input_data.get("text", "")
-            
-            # 如果有图像输入，执行视觉分析
-            if input_data.get("image"):
-                workflow.logger.info("phase1_vision_analysis_started")
-                
-                # 并行执行：常规分析 + 危险检测
-                vision_task = workflow.execute_activity(
-                    vision_analyze,
-                    args=[input_data["image"], input_data.get("analysis_type", "general"), input_data.get("user_role", "elder")],
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=RetryPolicy(maximum_attempts=2)
-                )
-                
-                danger_task = workflow.execute_activity(
-                    vision_detect_danger,
-                    args=[input_data["image"]],
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=RetryPolicy(maximum_attempts=2)
-                )
-                
-                # 等待并行任务完成
-                vision_result, danger_result = await workflow.wait(vision_task, danger_task)
-                
-                vision_context = {
-                    "analysis": vision_result,
-                    "danger": danger_result,
-                    "risk_level": danger_result.get("risk_level", "normal")
-                }
-                
-                workflow_result["steps_executed"].append("vision_analysis")
-                workflow.logger.info("phase1_vision_analysis_completed", 
-                                   risk_level=vision_context["risk_level"])
-            
-            # 如果有音频输入，执行语音识别
-            if input_data.get("audio"):
-                workflow.logger.info("phase1_speech_recognition_started")
-                
-                user_text = await workflow.execute_activity(
-                    speech_transcribe,
-                    args=[input_data["audio"], input_data.get("sample_rate", 16000)],
-                    start_to_close_timeout=timedelta(seconds=30),
-                    retry_policy=RetryPolicy(maximum_attempts=2)
-                )
-                
-                workflow_result["steps_executed"].append("speech_recognition")
-                workflow.logger.info("phase1_speech_recognition_completed", text_length=len(user_text))
             
             # ==================== Phase 2: 记忆检索 ====================
             # 与输入处理并行（如果有历史查询需求）
@@ -134,7 +83,6 @@ class CareTaskWorkflow:
             # 构建上下文
             planning_context = {
                 "user_intent": user_text,
-                "vision_context": vision_context,
                 "history": memory_context,
                 "trigger_type": trigger_type
             }
@@ -171,14 +119,9 @@ class CareTaskWorkflow:
                     workflow_result["final_response"] = response
                     
                 elif action == "notify":
-                    # 语音通知
-                    audio = await workflow.execute_activity(
-                        speech_synthesize,
-                        args=[step_input],
-                        start_to_close_timeout=timedelta(seconds=30),
-                        retry_policy=RetryPolicy(maximum_attempts=2)
-                    )
-                    workflow_result["audio_response"] = audio
+                    # TODO: 通知功能（需要实现其他通知方式）
+                    workflow.logger.info("notify_action_not_implemented", message=step_input)
+                    workflow_result["final_response"] = step_input
                     
                 elif action == "store_memory":
                     # 存储记忆

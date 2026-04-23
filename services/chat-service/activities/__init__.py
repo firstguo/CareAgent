@@ -2,10 +2,6 @@
 Activities包
 """
 from .task_activities import (
-    speech_transcribe,
-    speech_synthesize,
-    vision_analyze,
-    vision_detect_danger,
     vision_detect_danger_video,
     llm_plan_task,
     llm_chat,
@@ -14,10 +10,6 @@ from .task_activities import (
 )
 
 __all__ = [
-    "speech_transcribe",
-    "speech_synthesize",
-    "vision_analyze",
-    "vision_detect_danger",
     "vision_detect_danger_video",
     "llm_plan_task",
     "llm_chat",

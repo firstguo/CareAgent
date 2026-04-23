@@ -3,6 +3,7 @@ Chat Service - 统一的多模态交互服务
 整合语音、视觉、LLM、记忆能力，提供REST API和Temporal工作流编排
 """
 import os
+import asyncio
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
@@ -10,6 +11,7 @@ from datetime import datetime
 import structlog
 from motor.motor_asyncio import AsyncIOMotorClient
 from temporalio.client import Client
+from temporalio.worker import Worker
 
 # 配置日志
 structlog.configure(processors=[structlog.processors.JSONRenderer()])
@@ -26,6 +28,8 @@ app = FastAPI(
 temporal_client: Client
 mongo_client: AsyncIOMotorClient
 mongo_db = None
+temporal_worker: Worker
+worker_task: asyncio.Task
 
 # ============================================
 # 数据模型
@@ -73,8 +77,8 @@ class EventTriggerInput(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """启动时初始化连接"""
-    global temporal_client, mongo_client, mongo_db
+    """启动时初始化连接和Temporal Worker"""
+    global temporal_client, mongo_client, mongo_db, temporal_worker, worker_task
     
     # 连接Temporal
     temporal_client = await Client.connect(
@@ -95,13 +99,64 @@ async def startup():
     await mongo_db.tasks.create_index([("expire_at", 1)], expireAfterSeconds=0)
     
     logger.info("mongodb_connected")
+    
+    # 启动Temporal Worker
+    await start_temporal_worker()
 
 @app.on_event("shutdown")
 async def shutdown():
-    """关闭时清理连接"""
+    """关闭时清理连接和Worker"""
+    # 停止Temporal Worker
+    if temporal_worker:
+        logger.info("stopping_temporal_worker")
+        temporal_worker.stop()
+        if worker_task:
+            await worker_task
+        logger.info("temporal_worker_stopped")
+    
     if mongo_client:
         mongo_client.close()
         logger.info("mongodb_disconnected")
+
+async def start_temporal_worker():
+    """启动Temporal Worker"""
+    global temporal_worker, worker_task
+    
+    # 导入Workflows和Activities
+    from workflows.care_task_workflow import CareTaskWorkflow
+    from activities.task_activities import (
+        vision_detect_danger_video,
+        llm_plan_task,
+        llm_chat,
+        memory_retrieve,
+        memory_store
+    )
+    
+    task_queue = os.getenv("TEMPORAL_TASK_QUEUE", "careagent-tasks")
+    
+    # 创建Worker
+    temporal_worker = Worker(
+        temporal_client,
+        task_queue=task_queue,
+        workflows=[CareTaskWorkflow],
+        activities=[
+            vision_detect_danger_video,
+            llm_plan_task,
+            llm_chat,
+            memory_retrieve,
+            memory_store
+        ]
+    )
+    
+    logger.info("temporal_worker_started",
+                workflows=["CareTaskWorkflow"],
+                activities_count=5,
+                task_queue=task_queue)
+    
+    # 在后台运行Worker
+    worker_task = asyncio.create_task(temporal_worker.run())
+    
+    logger.info("temporal_worker_running")
 
 # ============================================
 # REST API端点

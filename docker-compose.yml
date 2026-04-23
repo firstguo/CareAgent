@@ -212,6 +212,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    environment:
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
 
   # ============================================
   # 已删除的旧服务（已合并到chat-service）
@@ -243,21 +246,21 @@ services:
   # Observability
   # ============================================
 
-  # MLflow Tracking Server
-  mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.9.0
-    ports:
-      - "5000:5000"
-    environment:
-      - MLFLOW_TRACKING_URI=http://localhost:5000
-    volumes:
-      - mlflow-data:/mlruns
-    command: mlflow server --host 0.0.0.0 --port 5000
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # MLflow Tracking Server (暂时禁用 - 镜像下载问题)
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:v2.9.0
+  #   ports:
+  #     - "5000:5000"
+  #   environment:
+  #     - MLFLOW_TRACKING_URI=http://localhost:5000
+  #   volumes:
+  #     - mlflow-data:/mlruns
+  #   command: mlflow server --host 0.0.0.0 --port 5000
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
 
   # Prometheus
   prometheus:

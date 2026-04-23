@@ -63,11 +63,18 @@ def init_collection():
         FieldSchema(name="voice_preference", dtype=DataType.VARCHAR, max_length=100),
         FieldSchema(name="created_at", dtype=DataType.VARCHAR, max_length=50),
         FieldSchema(name="updated_at", dtype=DataType.VARCHAR, max_length=50),
+        FieldSchema(name="profile_vector", dtype=DataType.FLOAT_VECTOR, dim=128),  # 用户画像向量
     ]
     
     schema = CollectionSchema(fields, "CareAgent Users")
     collection = Collection(COLLECTION_NAME, schema)
-    collection.create_index(field_name="user_id", index_type="FLAT")
+    # 为向量字段创建索引
+    index_params = {
+        "index_type": "IVF_FLAT",
+        "metric_type": "L2",
+        "params": {"nlist": 128}
+    }
+    collection.create_index(field_name="profile_vector", index_params=index_params)
     return collection
 
 collection = init_collection()

@@ -1,8 +1,8 @@
 # FastAPI + MCP Server
-fastapi==0.109.0
-uvicorn==0.27.0
-mcp==1.0.0
-pydantic==2.5.3
+fastapi
+uvicorn
+mcp
+pydantic
 
 # TAVILY Web Search
 tavily-python==0.3.1

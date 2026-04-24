@@ -60,7 +60,7 @@ class ScheduleManager {
     }
     
     /**
-     * 添加定时任务
+     * 添加定时任务（支持 audio_reminder）
      */
     addSchedule(schedule) {
         const newSchedule = {
@@ -69,6 +69,7 @@ class ScheduleManager {
             cron: schedule.cron,
             message: schedule.message,
             context: schedule.context || {},
+            audio_reminder: schedule.audio_reminder || null,  // 存储提醒语音
             enabled: true,
             expired: false,
             lastTriggered: null,
@@ -211,7 +212,7 @@ class ScheduleManager {
     }
     
     /**
-     * 触发定时任务
+     * 触发定时任务（播放 audio_reminder）
      */
     async triggerSchedule(schedule) {
         const now = new Date();
@@ -225,38 +226,16 @@ class ScheduleManager {
         console.log('[ScheduleManager] 触发定时任务:', schedule.id, schedule.message);
         
         try {
-            // 调用Chat Service API
-            const response = await fetch('/api_planning', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    user_id: schedule.context.user_id || 'default',
-                    trigger_type: 'scheduled',
-                    input: {
-                        type: 'text',
-                        text: schedule.message
-                    },
-                    notification: {
-                        type: 'voice',
-                        message: schedule.message
-                    }
-                })
-            });
-            
-            const result = await response.json();
-            
-            // 更新最后触发时间
-            schedule.lastTriggered = now.toISOString();
-            this.saveSchedules();
-            
             // 震动提醒（如果支持）
             if (navigator.vibrate) {
                 navigator.vibrate([200, 100, 200]);
             }
             
-            console.log('[ScheduleManager] 定时任务触发成功:', result.task_id);
+            // 播放提醒语音（如果有）
+            if (schedule.audio_reminder) {
+                console.log('[ScheduleManager] 播放提醒语音');
+                this.playAudioReminder(schedule.audio_reminder);
+            }
             
             // 显示通知（如果支持）
             if ('Notification' in window && Notification.permission === 'granted') {
@@ -266,8 +245,51 @@ class ScheduleManager {
                 });
             }
             
+            // 更新最后触发时间
+            schedule.lastTriggered = now.toISOString();
+            this.saveSchedules();
+            
+            console.log('[ScheduleManager] 定时任务触发成功:', schedule.id);
+            
         } catch (e) {
             console.error('[ScheduleManager] 定时任务触发失败:', e);
+        }
+    }
+    
+    /**
+     * 播放提醒语音
+     */
+    playAudioReminder(base64Audio, format = 'wav') {
+        try {
+            // 将Base64转换为Blob
+            const byteCharacters = atob(base64Audio);
+            const byteNumbers = new Array(byteCharacters.length);
+            
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: `audio/${format}` });
+            
+            // 创建Audio对象并播放
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            
+            audio.play().then(() => {
+                console.log('[ScheduleManager] 提醒语音播放成功');
+                
+                // 播放结束后释放URL
+                audio.onended = () => {
+                    URL.revokeObjectURL(audioUrl);
+                };
+            }).catch(e => {
+                console.error('[ScheduleManager] 提醒语音播放失败:', e);
+                URL.revokeObjectURL(audioUrl);
+            });
+            
+        } catch (e) {
+            console.error('[ScheduleManager] 提醒语音解码失败:', e);
         }
     }
     

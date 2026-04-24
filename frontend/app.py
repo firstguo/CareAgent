@@ -115,7 +115,7 @@ with tab1:
     # 输入方式选择
     input_type = st.radio(
         "选择输入方式",
-        ["文本", "语音", "图像"],
+        ["文本", "语音", "视频"],
         horizontal=True
     )
     
@@ -126,7 +126,7 @@ with tab1:
             if user_input:
                 with st.spinner("处理中..."):
                     try:
-                        # 调用后端API提交任务
+                        # 调用后端API提交对话（同步响应）
                         response = requests.post(
                             f"{api_url}/api_planning",
                             json={
@@ -141,50 +141,80 @@ with tab1:
                         
                         if response.status_code == 200:
                             result = response.json()
-                            task_id = result["task_id"]
                             
-                            st.success(f"✅ 任务已提交: {task_id}")
-                            
-                            # 轮询任务状态
-                            with st.spinner("等待回复..."):
-                                progress_bar = st.progress(0)
+                            # 检测响应模式：conversation 或 task
+                            if result.get("mode") == "conversation":
+                                # 同步对话响应（新格式）
+                                st.success(f"✅ 会话: {result.get('session_id', 'unknown')}")
                                 
-                                for i in range(30):  # 最多等待60秒
-                                    time.sleep(2)
-                                    progress_bar.progress((i + 1) / 30)
+                                # 显示文本回复
+                                text_response = result.get("response", "")
+                                if text_response:
+                                    st.subheader("💬 AI回复")
+                                    st.write(text_response)
+                                
+                                # 播放确认语音（audio_confirm）
+                                audio_confirm = result.get("audio_confirm")
+                                if audio_confirm:
+                                    st.subheader("🔊 确认语音")
+                                    audio_bytes = base64.b64decode(audio_confirm)
+                                    st.audio(audio_bytes, format="audio/wav")
+                                
+                                # 如果有定时任务，显示提醒语音（audio_reminder）
+                                schedule = result.get("schedule")
+                                audio_reminder = result.get("audio_reminder")
+                                if schedule and audio_reminder:
+                                    st.subheader("⏰ 定时任务已设置")
+                                    st.info(f"Cron: {schedule.get('cron')}")
+                                    st.info(f"提醒内容: {schedule.get('message')}")
                                     
-                                    status_response = requests.get(
-                                        f"{api_url}/api_task_status/{task_id}"
-                                    )
-                                    status = status_response.json()
+                                    st.subheader("🔔 提醒语音（定时播放）")
+                                    reminder_bytes = base64.b64decode(audio_reminder)
+                                    st.audio(reminder_bytes, format="audio/wav")
+                                
+                                # 保存任务历史
+                                st.session_state.task_history.append(result)
+                                
+                            else:
+                                # 异步任务响应（旧格式，保持兼容）
+                                task_id = result.get("task_id")
+                                st.success(f"✅ 任务已提交: {task_id}")
+                                
+                                # 轮询任务状态
+                                with st.spinner("等待回复..."):
+                                    progress_bar = st.progress(0)
                                     
-                                    if status["status"] == "completed":
-                                        # 显示文本回复
-                                        final_response = status["result"].get("final_response", "")
-                                        if final_response:
-                                            st.subheader("💬 AI回复")
-                                            st.write(final_response)
+                                    for i in range(30):
+                                        time.sleep(2)
+                                        progress_bar.progress((i + 1) / 30)
                                         
-                                        # 如果有音频，提供播放
-                                        audio_response = status["result"].get("audio_response")
-                                        if audio_response:
-                                            st.subheader("🔊 语音回复")
-                                            # 将base64音频转换为可播放格式
-                                            audio_bytes = base64.b64decode(audio_response)
-                                            st.audio(audio_bytes, format="audio/wav")
+                                        status_response = requests.get(
+                                            f"{api_url}/api_task_status/{task_id}"
+                                        )
+                                        status = status_response.json()
                                         
-                                        # 保存任务历史
-                                        st.session_state.task_history.append(status)
-                                        
+                                        if status["status"] == "completed":
+                                            final_response = status["result"].get("final_response", "")
+                                            if final_response:
+                                                st.subheader("💬 AI回复")
+                                                st.write(final_response)
+                                            
+                                            audio_response = status["result"].get("audio_response")
+                                            if audio_response:
+                                                st.subheader("🔊 语音回复")
+                                                audio_bytes = base64.b64decode(audio_response)
+                                                st.audio(audio_bytes, format="audio/wav")
+                                            
+                                            st.session_state.task_history.append(status)
+                                            progress_bar.empty()
+                                            break
+                                        elif status["status"] == "failed":
+                                            st.error(f"❌ 任务失败: {status.get('error', 'Unknown error')}")
+                                            progress_bar.empty()
+                                            break
+                                    else:
+                                        st.warning("⏰ 超时，请稍后手动查询结果")
                                         progress_bar.empty()
-                                        break
-                                    elif status["status"] == "failed":
-                                        st.error(f"❌ 任务失败: {status.get('error', 'Unknown error')}")
-                                        progress_bar.empty()
-                                        break
-                                else:
-                                    st.warning("⏰ 超时，请稍后手动查询结果")
-                                    progress_bar.empty()
                         else:
                             st.error(f"❌ 请求失败: {response.status_code} - {response.text}")
                     
@@ -192,49 +222,57 @@ with tab1:
                         st.error(f"请求失败: {str(e)}")
     
     elif input_type == "语音":
-        st.info("🎤 语音录制功能需要浏览器麦克风权限")
-        st.code("""
-// 语音录制示例
-const mediaRecorder = new MediaRecorder(stream);
-const chunks = [];
-
-mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-mediaRecorder.onstop = async () => {
-    const blob = new Blob(chunks, { type: 'audio/wav' });
-    const base64 = await blobToBase64(blob);
-    
-    const client = new ChatServiceClient(apiUrl);
-    const result = await client.sendVoiceMessage(userId, base64);
-};
-        """, language="javascript")
-    
-    elif input_type == "图像":
-        st.info("📷 图像上传功能")
-        uploaded_file = st.file_uploader("上传图像", type=["jpg", "jpeg", "png"])
+        st.info("🎤 语音输入将被转换为文字，然后走对话流程")
+        st.info("💡 语音识别使用阿里云 Fun-ASR，识别后等同于文字输入")
         
-        if uploaded_file:
-            st.image(uploaded_file, caption="上传的图像", use_column_width=True)
+        uploaded_audio = st.file_uploader("上传语音文件", type=["wav", "mp3"])
+        
+        if uploaded_audio:
+            st.audio(uploaded_audio, format="audio/wav")
             
-            analysis_type = st.selectbox(
-                "分析类型",
-                ["general", "safety", "emotion", "activity"]
-            )
+            audio_bytes = uploaded_audio.read()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
             
-            if st.button("分析图像", type="primary"):
-                st.code(f"""
-// 图像分析示例
-const reader = new FileReader();
-reader.onload = async function() {{
-    const base64 = reader.result.split(',')[1];
-    
-    const client = new ChatServiceClient(apiUrl);
-    const result = await client.sendImageMessage(userId, base64, '{analysis_type}');
-    
-    const status = await client.pollTaskStatus(result.task_id);
-    console.log('Vision Result:', status.result.final_response);
-}};
-reader.readAsDataURL(file);
-                """, language="javascript")
+            if st.button("发送语音", type="primary"):
+                with st.spinner("正在识别语音..."):
+                    try:
+                        response = requests.post(
+                            f"{api_url}/api_planning",
+                            json={
+                                "user_id": user_id,
+                                "trigger_type": "user_initiated",
+                                "input": {
+                                    "type": "voice",
+                                    "audio_data": audio_base64
+                                }
+                            }
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            
+                            # 处理对话响应（同文本输入）
+                            if result.get("mode") == "conversation":
+                                st.success(f"✅ 会话: {result.get('session_id')}")
+                                
+                                text_response = result.get("response", "")
+                                if text_response:
+                                    st.subheader("💬 AI回复")
+                                    st.write(text_response)
+                                
+                                audio_confirm = result.get("audio_confirm")
+                                if audio_confirm:
+                                    st.subheader("🔊 确认语音")
+                                    audio_bytes = base64.b64decode(audio_confirm)
+                                    st.audio(audio_bytes, format="audio/wav")
+                                
+                                st.session_state.task_history.append(result)
+                        else:
+                            st.error(f"❌ 请求失败: {response.status_code}")
+                    
+                    except Exception as e:
+                        st.error(f"请求失败: {str(e)}")
+
 
 # ============================================
 # Tab 2: 任务历史
@@ -335,42 +373,76 @@ with st.expander("📖 API文档"):
     ### Chat Service REST API
     
     #### POST /api_planning
-    提交任务，异步执行
+    提交任务（支持多模态输入）
     
+    **文本/语音输入（同步对话）**:
     ```json
     {
         "user_id": "user_001",
         "trigger_type": "user_initiated",
         "input": {
             "type": "text",
-            "text": "你好"
+            "text": "每天早上8点提醒吃药"
         }
     }
     ```
     
-    响应:
+    响应（新格式 - 对话模式）:
     ```json
     {
-        "task_id": "task_abc123",
-        "status": "pending",
-        "message": "任务已提交，正在处理中"
+        "mode": "conversation",
+        "session_id": "sess_xxx",
+        "response": "好的，已设置每天早上8点提醒你吃药",
+        "audio_confirm": "base64...",
+        "audio_reminder": "base64...",
+        "is_new_session": true,
+        "message_count": 2,
+        "schedule": {
+            "cron": "0 8 * * *",
+            "message": "提醒吃药",
+            "type": "medication_reminder",
+            "audio_reminder": "base64..."
+        }
     }
     ```
     
-    #### GET /api_task_status/{task_id}
-    查询任务状态
-    
-    响应:
+    **视频输入（同步）**:
     ```json
     {
-        "task_id": "task_abc123",
-        "status": "completed",
+        "user_id": "user_001",
+        "trigger_type": "event_driven",
+        "input": {
+            "type": "video",
+            "video_data": "base64..."
+        }
+    }
+    ```
+    
+    响应（非危险）:
+    ```json
+    {
+        "mode": "ignored",
+        "status": "ignored",
+        "reason": "no_risk_detected",
         "result": {
-            "final_response": "你好！有什么可以帮助你的？",
-            "audio_response": "base64音频数据..."
+            "risk_level": "normal",
+            "confidence": 0.9
         }
     }
     ```
+    
+    响应（危险）:
+    ```json
+    {
+        "mode": "conversation",
+        "session_id": "sess_xxx",
+        "response": "🚨 检测到摔倒！建议立即...",
+        "audio_confirm": "base64...",
+        "schedule": {...}
+    }
+    ```
+    
+    **注意**: 图像输入暂不支持，将返回 400 错误。
     """)
 
 # ============================================
@@ -400,84 +472,77 @@ if uploaded_video:
     st.write(f"📊 视频大小: {len(video_bytes) / 1024:.1f} KB")
     
     if st.button("🔍 分析视频", type="primary"):
-        with st.spinner("正在提交视频分析任务..."):
+        with st.spinner("正在分析视频...（预计 5-10 秒）"):
             try:
-                # 调用后端API
+                # 调用后端API - 统一同步接口
                 response = requests.post(
-                    f"{api_url}/api_event_trigger",
+                    f"{api_url}/api_planning",
                     json={
                         "user_id": "test_user_001",
                         "trigger_type": "event_driven",
-                        "event_type": "manual_test",
-                        "video_data": video_base64
-                    }
+                        "input": {
+                            "type": "video",
+                            "video_data": video_base64
+                        }
+                    },
+                    timeout=60  # 60 秒超时
                 )
                 
                 if response.status_code == 200:
                     result = response.json()
-                    task_id = result["task_id"]
                     
-                    st.success(f"✅ 任务已提交: {task_id}")
-                    
-                    # 轮询结果
-                    with st.spinner("等待分析结果..."):
-                        progress_bar = st.progress(0)
+                    # 处理不同模式
+                    if result.get("mode") == "ignored":
+                        # 非危险视频，快速返回
+                        st.success("✅ 视频分析完成：状态正常")
                         
-                        for i in range(30):  # 最多等待60秒
-                            time.sleep(2)
-                            progress_bar.progress((i + 1) / 30)
+                        detection_result = result.get("result", {})
+                        risk_level = detection_result.get("risk_level", "unknown")
+                        confidence = detection_result.get("confidence", 0)
+                        
+                        st.info(f"风险等级: {risk_level}，置信度: {confidence:.0%}")
+                        
+                        # 保存历史记录
+                        st.session_state.task_history.append(result)
+                    
+                    elif result.get("mode") == "conversation":
+                        # 危险视频，走对话流程
+                        st.warning("⚠️ 检测到潜在风险！")
+                        
+                        # 显示文本回复
+                        text_response = result.get("response", "")
+                        if text_response:
+                            st.subheader("💬 AI建议")
+                            st.write(text_response)
+                        
+                        # 播放确认语音
+                        audio_confirm = result.get("audio_confirm")
+                        if audio_confirm:
+                            st.subheader("🔊 语音提醒")
+                            audio_bytes = base64.b64decode(audio_confirm)
+                            st.audio(audio_bytes, format="audio/wav")
+                        
+                        # 如果有定时任务，显示提醒语音
+                        schedule = result.get("schedule")
+                        audio_reminder = result.get("audio_reminder")
+                        if schedule and audio_reminder:
+                            st.subheader("⏰ 后续跟进任务")
+                            st.info(f"Cron: {schedule.get('cron')}")
+                            st.info(f"提醒内容: {schedule.get('message')}")
                             
-                            status_response = requests.get(
-                                f"{api_url}/api_task_status/{task_id}"
-                            )
-                            status = status_response.json()
-                            
-                            if status["status"] == "completed":
-                                # 显示结果
-                                detection_result = status["result"]["result"]
-                                
-                                risk_level = detection_result["risk_level"]
-                                confidence = detection_result["confidence"]
-                                
-                                # 根据风险等级显示不同样式
-                                if risk_level == "critical":
-                                    st.error(f"🚨 检测到摔倒！置信度: {confidence:.0%}")
-                                elif risk_level == "warning":
-                                    st.warning(f"⚠️ 潜在风险！置信度: {confidence:.0%}")
-                                else:
-                                    st.success(f"✅ 状态正常！置信度: {confidence:.0%}")
-                                
-                                # 显示时序证据
-                                st.subheader("📈 时序分析")
-                                st.info(detection_result.get("temporal_evidence", "N/A"))
-                                
-                                # 显示建议
-                                st.subheader("💡 建议措施")
-                                for rec in detection_result.get("recommendations", []):
-                                    st.write(f"• {rec}")
-                                
-                                # 显示帧详情（可选）
-                                with st.expander("📸 查看帧分析详情"):
-                                    for i, frame_result in enumerate(
-                                        detection_result.get("frame_analysis", [])
-                                    ):
-                                        st.write(
-                                            f"**帧 {i+1}**: "
-                                            f"风险等级={frame_result.get('risk_level', 'N/A')}, "
-                                            f"描述={frame_result.get('risk_description', 'N/A')}"
-                                        )
-                                
-                                progress_bar.empty()
-                                break
-                            elif status["status"] == "failed":
-                                st.error(f"❌ 分析失败: {status.get('error', 'Unknown error')}")
-                                progress_bar.empty()
-                                break
-                        else:
-                            st.warning("⏰ 超时，请稍后手动查询结果")
-                            progress_bar.empty()
+                            st.subheader("🔔 提醒语音（定时播放）")
+                            reminder_bytes = base64.b64decode(audio_reminder)
+                            st.audio(reminder_bytes, format="audio/wav")
+                        
+                        # 保存历史记录
+                        st.session_state.task_history.append(result)
+                    
+                    else:
+                        st.error(f"❌ 未知响应模式: {result.get('mode')}")
                 else:
                     st.error(f"❌ 请求失败: {response.status_code} - {response.text}")
             
+            except requests.exceptions.Timeout:
+                st.error("❌ 请求超时，视频分析耗时过长")
             except Exception as e:
                 st.error(f"请求失败: {str(e)}")

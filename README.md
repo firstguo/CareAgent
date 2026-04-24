@@ -146,14 +146,12 @@ CareAgent/
 ├── services/
 │   ├── chat-service/          # 核心服务（语音+视觉+LLM+记忆）
 │   │   ├── main.py            # FastAPI应用
-│   │   ├── worker.py          # Temporal Worker
+│   │   ├── executor.py        # 异步任务执行器
 │   │   ├── modules/           # 能力模块
 │   │   │   ├── speech.py      # 语音服务
 │   │   │   ├── vision.py      # 视觉服务
 │   │   │   ├── llm.py         # LLM服务
 │   │   │   └── memory.py      # 记忆服务
-│   │   ├── workflows/         # Temporal工作流
-│   │   └── activities/        # Temporal活动
 │   ├── user-service/          # 用户管理
 │   └── tools-mcp/             # 工具服务
 ├── frontend/                  # Streamlit前端
@@ -170,26 +168,28 @@ CareAgent/
 ## 🛠️ 技术栈
 
 - **后端**: FastAPI, Python 3.11
-- **工作流**: Temporal
+- **异步任务**: asyncio.create_task（轻量级异步执行）
 - **LLM**: LangChain + 通义千问
-- **语音**: 阿里云NLS
+- **语音**: 阿里云DashScope
 - **视觉**: Qwen-VL
 - **向量数据库**: Milvus + Mem0
 - **任务存储**: MongoDB
 - **缓存**: Redis
+- **重试机制**: tenacity
 - **前端**: Streamlit + JavaScript
 
 ## 📝 开发指南
 
-### 添加新的Activity
+### 添加新的任务类型
 
-1. 在 `services/chat-service/activities/task_activities.py` 中定义函数
-2. 使用 `@activity.defn(name="...")` 装饰器
-3. 在 `worker.py` 中注册到Worker
+1. 在 `services/chat-service/executor.py` 中添加新的执行函数（如 `execute_xxx_task()`）
+2. 在 `execute_task()` 主入口中根据 `trigger_type` 或 `event_type` 分发到新函数
+3. 使用 `@retry` 装饰器为外部 API 调用添加重试机制
+4. 在 `main.py` 的 `/api_planning` 端点中调用（已自动支持）
 
-### 修改工作流
+### 修改任务流程
 
-编辑 `services/chat-service/workflows/care_task_workflow.py`，修改DAG编排逻辑。
+编辑 `services/chat-service/executor.py`，修改对应执行函数的逻辑。
 
 ### 前端开发
 
@@ -197,15 +197,17 @@ CareAgent/
 
 ## 🔍 监控
 
-- **Temporal UI**: http://localhost:8080 - 查看工作流状态
+- **MongoDB**: 任务状态查询（`/api_task_status/{task_id}`）
 - **Prometheus**: 指标监控
 - **健康检查**: 各服务的 `/health` 端点
+- **日志**: structlog JSON 格式日志
 
 ## ⚠️ 注意事项
 
 1. **定时任务**: 需要保持浏览器页面打开，关闭页面将导致定时任务失效
 2. **API密钥**: 必须在 `.env` 中配置所有必需的API密钥
-3. **资源需求**: 完整启动所有服务约需4GB内存
+3. **资源需求**: 完整启动所有服务约需3GB内存（删除 Temporal 后降低）
+4. **任务超时**: 异步任务默认超时时间为 60 秒，可在 `main.py` 中调整
 
 ## 📄 License
 

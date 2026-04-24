@@ -70,47 +70,6 @@ services:
       timeout: 20s
       retries: 3
 
-  # Temporal PostgreSQL - 元数据存储
-  temporal-db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=temporal
-      - POSTGRES_PASSWORD=temporal
-      - POSTGRES_DB=temporal
-    volumes:
-      - temporal-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "temporal"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Temporal Server - 工作流引擎
-  temporal:
-    image: temporalio/auto-setup:1.22.0
-    ports:
-      - "7233:7233"
-    environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=temporal
-      - POSTGRES_PWD=temporal
-      - POSTGRES_SEEDS=temporal-db
-    depends_on:
-      temporal-db:
-        condition: service_healthy
-
-  # Temporal UI - 工作流监控
-  temporal-ui:
-    image: temporalio/ui:2.20.0
-    ports:
-      - "8080:8080"
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    depends_on:
-      - temporal
-
   # MongoDB - 任务状态存储
   mongodb:
     image: mongo:7.0
@@ -158,7 +117,6 @@ services:
     volumes:
       - ./services/chat-service:/app
     depends_on:
-      - temporal
       - mongodb
       - milvus
       - redis
@@ -168,7 +126,6 @@ services:
       timeout: 10s
       retries: 3
     environment:
-      - TEMPORAL_HOST=temporal:7233
       - MONGODB_URI=mongodb://admin:admin123@mongodb:27017
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
@@ -305,7 +262,6 @@ volumes:
   etcd-data:
   minio-data:
   milvus-data:
-  temporal-db-data:
   mongodb-data:
   mlflow-data:
   prometheus-data:

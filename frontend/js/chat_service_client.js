@@ -92,63 +92,168 @@ class ChatServiceClient {
     }
     
     /**
-     * 发送文本消息
+     * 发送文本消息（支持多轮对话）
      */
     async sendTextMessage(userId, text) {
-        return this.submitTask({
-            user_id: userId,
-            trigger_type: 'user_initiated',
-            input: {
-                type: 'text',
-                text: text
+        try {
+            const response = await fetch(`${this.baseUrl}/api_planning`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    trigger_type: 'user_initiated',
+                    input: {
+                        type: 'text',
+                        text: text
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-        });
+            
+            const result = await response.json();
+            console.log('[ChatServiceClient] 对话响应:', result);
+            return result;
+            
+        } catch (e) {
+            console.error('[ChatServiceClient] 发送消息失败:', e);
+            throw e;
+        }
     }
     
     /**
-     * 发送语音消息
+     * 发送语音消息（支持多轮对话）
      */
     async sendVoiceMessage(userId, audioData, sampleRate = 16000) {
-        return this.submitTask({
-            user_id: userId,
-            trigger_type: 'user_initiated',
-            input: {
-                type: 'voice',
-                audio_data: audioData,
-                sample_rate: sampleRate
+        try {
+            const response = await fetch(`${this.baseUrl}/api_planning`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    trigger_type: 'user_initiated',
+                    input: {
+                        type: 'voice',
+                        audio_data: audioData,
+                        sample_rate: sampleRate
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-        });
+            
+            const result = await response.json();
+            console.log('[ChatServiceClient] 语音响应:', result);
+            return result;
+            
+        } catch (e) {
+            console.error('[ChatServiceClient] 发送语音失败:', e);
+            throw e;
+        }
     }
     
     /**
-     * 发送图像消息
+     * 发送视频消息（摔倒检测）
      */
-    async sendImageMessage(userId, imageData, analysisType = 'general') {
-        return this.submitTask({
-            user_id: userId,
-            trigger_type: 'user_initiated',
-            input: {
-                type: 'image',
-                image_data: imageData,
-                analysis_type: analysisType
+    async sendVideoMessage(userId, videoData) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api_planning`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    trigger_type: 'event_driven',
+                    event_type: 'fall_detection',
+                    input: {
+                        type: 'video',
+                        video_data: videoData
+                    }
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-        });
+            
+            const result = await response.json();
+            console.log('[ChatServiceClient] 视频检测响应:', result);
+            return result;
+            
+        } catch (e) {
+            console.error('[ChatServiceClient] 发送视频失败:', e);
+            throw e;
+        }
     }
     
     /**
-     * 发送多模态消息
+     * 处理对话响应（支持双语音）
      */
-    async sendMultimodalMessage(userId, text, audioData, imageData) {
-        return this.submitTask({
-            user_id: userId,
-            trigger_type: 'user_initiated',
-            input: {
-                type: 'multimodal',
-                text: text,
-                audio_data: audioData,
-                image_data: imageData
+    async handleConversationResponse(result, options = {}) {
+        const {
+            onTextResponse = null,
+            onAudioConfirm = null,
+            onAudioReminder = null,
+            onScheduleDetected = null
+        } = options;
+        
+        // 模式检测：conversation 或 task（异步任务）
+        if (result.mode === 'conversation') {
+            // 同步对话响应
+            const response = result.response;
+            const audioConfirm = result.audio_confirm;
+            const audioReminder = result.audio_reminder;
+            const schedule = result.schedule;
+            
+            // 处理文本回复
+            if (onTextResponse && response) {
+                onTextResponse(response);
             }
-        });
+            
+            // 立即播放确认语音
+            if (onAudioConfirm && audioConfirm) {
+                onAudioConfirm(audioConfirm);
+            }
+            
+            // 如果检测到定时任务
+            if (schedule && onScheduleDetected) {
+                onScheduleDetected(schedule);
+            }
+            
+            // 存储提醒语音供定时触发时使用
+            if (audioReminder && schedule) {
+                // 将 audio_reminder 存入 schedule 对象，供前端定时触发时播放
+                schedule.audio_reminder = audioReminder;
+                
+                if (onAudioReminder) {
+                    onAudioReminder(audioReminder, schedule);
+                }
+            }
+            
+            return {
+                type: 'conversation',
+                sessionId: result.session_id,
+                response: response,
+                hasSchedule: !!schedule,
+                schedule: schedule
+            };
+        } else {
+            // 异步任务响应（视频检测等）
+            return {
+                type: 'task',
+                taskId: result.task_id,
+                status: result.status
+            };
+        }
     }
     
     /**

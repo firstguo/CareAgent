@@ -114,15 +114,15 @@ async def summarize(text: str) -> str:
         raise Exception(f"摘要生成失败: {str(e)}")
 
 
-async def generate_plan(context: Dict) -> Dict:
+async def generate_plan(context: Dict, available_tools: List[str]) -> Dict:
     """
-    任务规划 - LLM根据上下文生成执行计划
+    任务规划 - LLM根据上下文生成执行计划（任务 2.1-2.5）
     
     Args:
         context: 包含用户意图、视觉分析结果、历史记忆等
     
     Returns:
-        任务计划（包含步骤列表）
+        任务计划（包含步骤列表和工具调用列表）
     """
     try:
         user_intent = context.get("user_intent", "")
@@ -140,6 +140,12 @@ async def generate_plan(context: Dict) -> Dict:
 【历史记忆】
 {json.dumps(history, ensure_ascii=False, indent=2)}
 
+【可用工具】
+- tools.web_search: 网络搜索（查询实时信息、新闻等）
+- tools.location_query: 地理位置查询（查询地点信息、附近设施等）
+
+如果需要查询实时信息、新闻、地点等，请在工具调用列表中指定。
+
 请生成一个JSON格式的任务计划，包含以下步骤：
 {{
   "steps": [
@@ -150,11 +156,23 @@ async def generate_plan(context: Dict) -> Dict:
       "depends_on": ["依赖的步骤名称"]
     }}
   ],
+  "tools": [  // 新增：工具调用列表（任务 2.1-2.5）
+    {{
+      "name": "tools.web_search" 或 "tools.location_query",
+      "args": {{
+        "query": "搜索关键词"  // web_search 的参数
+        // 或
+        "location": "地点名称",  // location_query 的参数
+        "city": "城市名称"
+      }}
+    }}
+  ],
   "response_text": "给用户的回复",
   "should_save_schedule": false,
   "schedule": null
 }}
 
+如果没有需要调用的工具，tools 字段返回空数组 []。
 只返回JSON，不要其他内容。"""
         
         response = await llm_max.ainvoke([
@@ -168,7 +186,32 @@ async def generate_plan(context: Dict) -> Dict:
         
         plan = json.loads(result)
         
-        logger.info("plan_generated", steps_count=len(plan.get("steps", [])))
+        # 验证 tools 字段（任务 2.3）
+        if "tools" not in plan:
+            plan["tools"] = []
+        
+        if not isinstance(plan["tools"], list):
+            plan["tools"] = []
+        
+        # 验证工具名称是否在白名单中（任务 2.4-2.5）
+        registered_tools = {"tools.web_search", "tools.location_query"}
+        valid_tools = []
+        for tool in plan["tools"]:
+            if isinstance(tool, dict) and tool.get("name") in registered_tools:
+                valid_tools.append(tool)
+            else:
+                logger.warning(
+                    "unregistered_tool_skipped",
+                    tool_name=tool.get("name") if isinstance(tool, dict) else tool
+                )
+        
+        plan["tools"] = valid_tools
+        
+        logger.info(
+            "plan_generated",
+            steps_count=len(plan.get("steps", [])),
+            tools_count=len(plan.get("tools", []))
+        )
         return plan
         
     except Exception as e:
@@ -183,6 +226,7 @@ async def generate_plan(context: Dict) -> Dict:
                     "depends_on": []
                 }
             ],
+            "tools": [],  # 默认计划不包含工具调用
             "response_text": "我理解您的需求，让我来帮助您。",
             "should_save_schedule": False,
             "schedule": None

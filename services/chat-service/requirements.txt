@@ -3,9 +3,6 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 pydantic==2.10.0
 
-# Temporal
-temporalio==1.4.0
-
 # MongoDB
 motor==3.3.2
 pymongo==4.6.1
@@ -38,3 +35,6 @@ python-multipart==0.0.6
 # 视频处理
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
+
+# 重试机制
+tenacity>=8.2.0
